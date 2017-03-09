@@ -140,8 +140,8 @@ int AES_CBC_ENC(const unsigned char *IV, const unsigned char *key, const unsigne
 
 	memcpy(X, IV, BLOCK_SIZE);
 	padding_AES(&input[BLOCK_SIZE * (n - 1)], M_last, inputLength);
-
-	for (int i = 0; (i < n) && outputLength > 0; i++) {
+	int i;
+	for (i = 0; (i < n) && outputLength > 0; i++) {
 		unsigned const char * text = &input[BLOCK_SIZE * i];
 		if(i == n - 1){
 			text = M_last;
@@ -168,7 +168,8 @@ int AES_CBC_DEC(const unsigned char *IV, const unsigned char *key, const unsigne
 	int n = (inputLength + LAST_INDEX) / BLOCK_SIZE;
 
 	memcpy(Z, IV, BLOCK_SIZE);
-	for (int i = 0; (i < n) && outputLength > 0; i++) {
+	int i;
+	for (i = 0; (i < n) && outputLength > 0; i++) {
 		unsigned const char * cipher = &input[BLOCK_SIZE * i];
 		AES_128_DEC(key, cipher, X);
 		xor_128(Z, X, text);
