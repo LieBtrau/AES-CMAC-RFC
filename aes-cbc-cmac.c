@@ -33,9 +33,10 @@
 /*         Jicheol Lee  (jicheol.lee@samsung.com)               */
 /****************************************************************/
 
-#include "cmac.h"
 #include "TI_aes_128.h"
+#include "aes-cbc-cmac.h"
 #include <string.h>
+#include "aes-cbc-cmac.h"
 
 #ifdef DEBUG_CMAC
 #include <stdio.h>
@@ -89,18 +90,95 @@ int AES_CMAC_CHECK(const unsigned char *key, const unsigned char *input, int len
 	return memcmp(mac, T, BLOCK_SIZE);
 }
 
-static void AES_128(unsigned const char *key, unsigned const char* msg, unsigned char *cipher){
+static void AES_128_ENC(unsigned const char *key, unsigned const char* msg, unsigned char *cipher){
 	unsigned char key_copy[BLOCK_SIZE];
 	memcpy(cipher, msg, BLOCK_SIZE);
 	memcpy(key_copy, key, BLOCK_SIZE);
 	aes_enc_dec(cipher, key_copy, 0);
 }
 
-static void xor_128(const unsigned char *a, const unsigned char *b, unsigned char *out) {
+void AES_128_DEC(unsigned const char *key, unsigned const char* msg, unsigned char *cipher){
+	unsigned char key_copy[BLOCK_SIZE];
+	memcpy(cipher, msg, BLOCK_SIZE);
+	memcpy(key_copy, key, BLOCK_SIZE);
+	aes_enc_dec(cipher, key_copy, 1);
+}
+
+void xor_128(const unsigned char *a, const unsigned char *b, unsigned char *out) {
 	int i;
 	for (i = 0; i < BLOCK_SIZE; i++) {
 		out[i] = a[i] ^ b[i];
 	}
+}
+
+static void padding_AES(const unsigned char *lastb, unsigned char *pad, int length) {
+	int j;
+	length = length % BLOCK_SIZE;
+
+	if(length == 0){
+		memcpy(pad, lastb, BLOCK_SIZE);
+		return;
+	}
+
+	/* original last block */
+	for (j = 0; j < BLOCK_SIZE; j++) {
+		if (j < length) {
+			pad[j] = lastb[j];
+		} else {
+			pad[j] = 0x00;
+		}
+	}
+}
+
+int AES_CBC_ENC(const unsigned char *IV, const unsigned char *key, const unsigned char *input, int inputLength, unsigned char *output, int outputLength){
+	unsigned char X[BLOCK_SIZE], Y[BLOCK_SIZE], M_last[BLOCK_SIZE];
+
+	if (inputLength <= 0)
+		return 0; //nothing to encode
+
+	int n = (inputLength + LAST_INDEX) / BLOCK_SIZE; //TODO: last
+
+	memcpy(X, IV, BLOCK_SIZE);
+	padding_AES(&input[BLOCK_SIZE * (n - 1)], M_last, inputLength);
+
+	for (int i = 0; (i < n) && outputLength > 0; i++) {
+		unsigned const char * text = &input[BLOCK_SIZE * i];
+		if(i == n - 1){
+			text = M_last;
+		}
+		int outLen = (BLOCK_SIZE < outputLength)?BLOCK_SIZE:outputLength;
+		xor_128(X, text, Y);
+		AES_128_ENC(key, Y, X);
+		memcpy(output, X, outLen);
+		outputLength -= outLen;
+		output += outLen;
+	}
+
+	return n * BLOCK_SIZE;
+}
+
+int AES_CBC_DEC(const unsigned char *IV, const unsigned char *key, const unsigned char *input, int inputLength, unsigned char *output, int outputLength){
+	unsigned char X[BLOCK_SIZE], text[BLOCK_SIZE], Z[BLOCK_SIZE];
+
+	if (inputLength <= 0)
+		return 0; //nothing to encode
+
+	inputLength = ( inputLength / BLOCK_SIZE ) * BLOCK_SIZE;
+
+	int n = (inputLength + LAST_INDEX) / BLOCK_SIZE;
+
+	memcpy(Z, IV, BLOCK_SIZE);
+	for (int i = 0; (i < n) && outputLength > 0; i++) {
+		unsigned const char * cipher = &input[BLOCK_SIZE * i];
+		AES_128_DEC(key, cipher, X);
+		xor_128(Z, X, text);
+		memcpy(Z, cipher, BLOCK_SIZE);
+		memcpy(output, text, BLOCK_SIZE);
+		outputLength -= BLOCK_SIZE;
+		output += BLOCK_SIZE;
+	}
+
+	return n * BLOCK_SIZE;
 }
 
 /* AES-CMAC Generation Function */
@@ -122,7 +200,7 @@ char *K2) {
 	unsigned char L[BLOCK_SIZE];
 	unsigned char tmp[BLOCK_SIZE];
 
-	AES_128(key, const_Zero, L);
+	AES_128_ENC(key, const_Zero, L);
 
 	if ((L[0] & 0x80) == 0) { /* If MSB(L) = 0, then K1 = L << 1 */
 		leftshift_onebit(L, K1);
@@ -183,17 +261,14 @@ void AES_CMAC(const unsigned char *key, const unsigned char *input, int length,
 		xor_128(padded, K2, M_last);
 	}
 
-	for (i = 0; i < BLOCK_SIZE; i++)
-		X[i] = 0;
+	memset(X, 0, BLOCK_SIZE);
 	for (i = 0; i < n - 1; i++) {
 		xor_128(X, &input[BLOCK_SIZE * i], Y); /* Y := Mi (+) X  */
-		AES_128(key, Y, X); /* X := AES-128(KEY, Y); */
+		AES_128_ENC(key, Y, X); /* X := AES-128(KEY, Y); */
 	}
 
 	xor_128(X, M_last, Y);
-	AES_128(key, Y, X);
+	AES_128_ENC(key, Y, X);
 
-	for (i = 0; i < BLOCK_SIZE; i++) {
-		mac[i] = X[i];
-	}
+	memcpy(mac, X, BLOCK_SIZE);
 }
